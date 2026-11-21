@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+pnpm-lock.yaml
+yarn-lock.yaml
+package-lock.yaml
+
+# TypeScript
+*.tsbuildinfo
+dist/
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.api.ts
+*.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Figsitc specific
+.figma-context.json
+*.figma-*
