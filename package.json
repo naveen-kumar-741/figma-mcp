@@ -1,0 +1,20 @@
+{
+  "name": "@figma-mcp/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Universal Figma Context Engine",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint . --ext .ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.7.2"
+  }
+}
