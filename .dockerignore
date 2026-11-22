@@ -1,0 +1,55 @@
+# =============================================================================
+# Figma MCP Server - Docker Ignore
+# =============================================================================
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+*.tsbuildinfo
+
+# Tests
+tests
+*.test.ts
+jest.config.cjs
+
+# Configuration (dev only)
+.eslintrc*
+.prettierrc*
+tsconfig*.json
+
+# IDE/Editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Coverage
+coverage
