@@ -415,7 +415,7 @@ export class FigmaClient {
       try {
         // Build headers with conditional request support
         const headers = new Headers();
-        headers.set('Authorization', `Bearer ${this.accessToken}`);
+        headers.set('X-Figma-Token', this.accessToken);
         headers.set('Content-Type', 'application/json');
         
         // Merge any custom headers from init
