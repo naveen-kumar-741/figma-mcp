@@ -53,9 +53,9 @@ describe('FigmaClient', () => {
       const [url, options] = mockFetch.mock.calls[0];
       expect(url).toBe('https://api.figma.com/v1/files/fileKey123');
       expect(options?.headers).toBeDefined();
-      // Headers are a Headers object, check Authorization
+      // Headers are a Headers object, check X-Figma-Token
       const headers = options?.headers as Headers;
-      expect(headers.get('Authorization')).toBe('Bearer test-token');
+      expect(headers.get('X-Figma-Token')).toBe('test-token');
     });
 
     it('includes version parameter', async () => {

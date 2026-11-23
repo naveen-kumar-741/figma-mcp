@@ -5,6 +5,9 @@
  * Business logic (11 Figma tool handlers) remains isolated from the transport layer.
  */
 
+// Load .env file at runtime (must be first)
+import 'dotenv/config';
+
 import http from 'node:http';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -120,6 +123,17 @@ function getClient(): FigmaClient {
     throw new Error('Figma client not initialized. Set FIGMA_ACCESS_TOKEN environment variable.');
   }
   return figmaClient;
+}
+
+// Helper to normalize node IDs from URL format (1-5729) to API format (1:5729)
+function normalizeNodeId(id: string): string {
+  if (!id) return id;
+  return id.replace(/-/g, ':');
+}
+
+function normalizeNodeIds(ids: string[]): string[] {
+  if (!ids) return ids;
+  return ids.map(normalizeNodeId);
 }
 
 // Helper to handle Figma API errors
@@ -298,9 +312,12 @@ const figmaToolHandlers = {
     const { fileKey, nodeId, depth = 3, includeStyles = true, includeChildren = true } = params;
     const client = getClient();
     
+    // Normalize nodeId from URL format (1-5729) to API format (1:5729)
+    const normalizedNodeId = normalizeNodeId(nodeId);
+    
     try {
-      const response = await client.getFileNodes(fileKey, [nodeId], { depth });
-      const nodeData = response.nodes[nodeId];
+      const response = await client.getFileNodes(fileKey, [normalizedNodeId], { depth });
+      const nodeData = response.nodes[normalizedNodeId];
       
       if (!nodeData) {
         throw new Error(`Node ${nodeId} not found in file ${fileKey}`);
@@ -503,8 +520,11 @@ const figmaToolHandlers = {
     const { fileKey, selection, format = 'png', scale = 2, backgroundColor } = params;
     const client = getClient();
     
+    // Normalize selection from URL format (1-5729) to API format (1:5729)
+    const normalizedSelection = normalizeNodeIds(selection);
+    
     try {
-      const response = await client.getFileImages(fileKey, selection, { 
+      const response = await client.getFileImages(fileKey, normalizedSelection, { 
         format: format === 'pdf' ? 'svg' : format, // PDF not directly supported, use SVG
         scale,
         useAbsoluteBounds: true,
@@ -537,9 +557,12 @@ const figmaToolHandlers = {
     const { fileKey, format = 'svg', scale = 1, ids } = params;
     const client = getClient();
     
+    // Normalize ids from URL format (1-5729) to API format (1:5729) if provided
+    const normalizedIds = ids ? normalizeNodeIds(ids) : undefined;
+    
     try {
       // If no IDs provided, get all exportable nodes from file
-      let nodeIds = ids;
+      let nodeIds = normalizedIds;
       if (!nodeIds) {
         const file = await client.getFile(fileKey);
         
