@@ -614,6 +614,28 @@ export class FigmaClient {
       return false;
     }
   }
+
+  /**
+   * Get token info including user and teams for debugging permissions
+   */
+  async getTokenInfo(): Promise<{
+    user?: { id: string; handle: string; email: string };
+    teams?: Array<{ id: string; name: string; handle: string }>;
+    error?: string;
+  }> {
+    try {
+      const response = await this.request<{ 
+        user: { id: string; handle: string; email: string };
+        teams: Array<{ id: string; name: string; handle: string }>;
+      }>('/me');
+      return {
+        user: response.user,
+        teams: response.teams,
+      };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
 }
 
 // ============================================================================

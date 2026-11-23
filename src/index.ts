@@ -112,6 +112,22 @@ let figmaClient: FigmaClient;
 try {
   figmaClient = createFigmaClient();
   logger.info('Figma client initialized successfully');
+  
+  // Log token permissions for debugging
+  figmaClient.getTokenInfo().then(info => {
+    if (info.error) {
+      logger.warn({ error: info.error }, 'Failed to fetch token info');
+    } else {
+      logger.info({ 
+        user: info.user?.handle,
+        userId: info.user?.id,
+        teams: info.teams?.map(t => ({ id: t.id, name: t.name, handle: t.handle })),
+        teamCount: info.teams?.length || 0,
+      }, 'Figma token permissions');
+    }
+  }).catch(err => {
+    logger.warn({ error: String(err) }, 'Token info fetch failed');
+  });
 } catch (error) {
   logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Figma client not initialized');
   figmaClient = null as any;
