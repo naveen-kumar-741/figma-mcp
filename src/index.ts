@@ -24,6 +24,9 @@ const logger = pino({
   } : undefined,
 });
 
+// Map to store parsed MCP request arguments by requestId
+const mcpRequestStore = new Map<string, { method?: string; params?: any; id?: string | number }>();
+
 // Zod v4 validation schemas for all Figma tools
 const figmaSchemas = {
   figma_sync: z.object({
@@ -36,6 +39,8 @@ const figmaSchemas = {
     projectId: z.string().optional(),
     teamId: z.string().optional(),
   }),
+
+  figma_list_all_files: z.object({}),
 
   figma_get_file_overview: z.object({
     fileKey: z.string().min(1, 'File key is required'),
@@ -258,6 +263,70 @@ const figmaToolHandlers = {
     }
   },
 
+  // List ALL files accessible to the token (discovers teams -> projects -> files)
+  async figma_list_all_files(params: {}) {
+    const client = getClient();
+    
+    try {
+      // Get token info including teams
+      const tokenInfo = await client.getTokenInfo();
+      
+      if (tokenInfo.error) {
+        throw new Error(`Failed to get token info: ${tokenInfo.error}`);
+      }
+      
+      if (!tokenInfo.teams || tokenInfo.teams.length === 0) {
+        return {
+          success: true,
+          files: [],
+          count: 0,
+          message: 'Token has no team access. Only personal drafts are accessible.',
+        };
+      }
+      
+      let allFiles: any[] = [];
+      
+      // For each team, get projects and then files
+      for (const team of tokenInfo.teams) {
+        try {
+          const projectsResponse = await client.getTeamProjects(team.id);
+          
+          for (const project of projectsResponse.projects) {
+            try {
+              const response = await client.getProjectFiles(project.id);
+              const files = response.files.map(f => ({
+                key: f.key,
+                name: f.name,
+                lastModified: f.lastModified,
+                thumbnailUrl: f.thumbnailUrl,
+                version: f.version,
+                teamId: team.id,
+                teamName: team.name,
+                projectId: project.id,
+                projectName: project.name
+              }));
+              allFiles.push(...files);
+            } catch (projectError) {
+              // Skip projects we can't access
+              console.warn(`Failed to get files for project ${project.id}:`, projectError);
+            }
+          }
+        } catch (teamError) {
+          console.warn(`Failed to get projects for team ${team.id}:`, teamError);
+        }
+      }
+      
+      return {
+        success: true,
+        files: allFiles,
+        count: allFiles.length,
+        teamsScanned: tokenInfo.teams.length,
+      };
+    } catch (error) {
+      handleFigmaError(error, 'figma_list_all_files');
+    }
+  },
+
   // Get file metadata and structure
   async figma_get_file_overview(params: { fileKey: string; version?: string; branchData?: boolean }) {
     const { fileKey, version, branchData } = params;
@@ -435,7 +504,7 @@ const figmaToolHandlers = {
     
     try {
       const response = await client.getFileComponents(fileKey);
-      let components = Object.values(response.components);
+      let components = Object.values(response.meta?.components || {});
       
       if (onlyPublished) {
         components = components.filter(c => c.description || c.key); // Figma marks published components
@@ -713,15 +782,112 @@ function createFigmaMcpServer(): McpServer {
     version: '1.0.0',
   });
 
+  // Map to store parsed MCP request arguments by requestId
   Object.entries(figmaToolHandlers).forEach(([name, handler]) => {
     const schema = figmaSchemas[name as keyof typeof figmaSchemas];
     (server as any).registerTool(
       name,
       schema, // Zod v4 schema for validation & JSON Schema generation
       async (args: Record<string, unknown> | undefined) => {
+        logger.info({ toolName: name, rawArgs: JSON.stringify(args, null, 2) }, 'MCP tool called');
+        // Try to extract actual arguments from various possible locations
+        let actualArgs: Record<string, unknown> = {};
+        
+        const a = args as any;
+        
+        if (a) {
+          // Strategy 1: args.arguments (standard MCP protocol - args = { name, arguments })
+          if (a.arguments && typeof a.arguments === 'object') {
+            actualArgs = a.arguments as Record<string, unknown>;
+          }
+          // Strategy 2: args.params (some SDK versions)
+          else if (a.params && typeof a.params === 'object') {
+            actualArgs = a.params as Record<string, unknown>;
+          }
+          // Strategy 3: Check for mcpReq structure with nested arguments
+          else if (a.mcpReq && a.mcpReq.arguments && typeof a.mcpReq.arguments === 'object') {
+            actualArgs = a.mcpReq.arguments as Record<string, unknown>;
+          }
+          // Strategy 4: Check for nested mcpReq.params
+          else if (a.mcpReq && a.mcpReq.params && typeof a.mcpReq.params === 'object') {
+            actualArgs = a.mcpReq.params as Record<string, unknown>;
+          }
+          // Strategy 5: args is already the arguments object (no mcpReq/http)
+          else if (!a.mcpReq && !a.http) {
+            actualArgs = a as Record<string, unknown>;
+          }
+          // Strategy 6: Check for nested arguments in mcpReq.arguments
+          else if (a.mcpReq?.arguments?.arguments) {
+            actualArgs = a.mcpReq.arguments.arguments as Record<string, unknown>;
+          }
+          // Strategy 7: Check mcpReq.params.arguments
+          else if (a.mcpReq?.params?.arguments) {
+            actualArgs = a.mcpReq.params.arguments as Record<string, unknown>;
+          }
+          // Strategy 8: Check mcpReq.params.params
+          else if (a.mcpReq?.params?.params) {
+            actualArgs = a.mcpReq.params.params as Record<string, unknown>;
+          }
+          // Strategy 9: The arguments might be in mcpReq.params.arguments or mcpReq.arguments
+          else if (a.mcpReq?.params) {
+            const mp = a.mcpReq.params as any;
+            if (mp.arguments && typeof mp.arguments === 'object') {
+              actualArgs = mp.arguments;
+            } else if (mp.params && typeof mp.params === 'object') {
+              actualArgs = mp.params;
+            }
+          }
+          // Strategy 10: Check if mcpRequest was parsed in the request handler (stored in mcpRequestStore) - BEFORE HTTP body
+          else if (a.mcpReq?.id) {
+            const requestId = String(a.mcpReq.id);
+            logger.info({ toolName: name, requestId, storeSize: mcpRequestStore.size, storeKeys: Array.from(mcpRequestStore.keys()) }, 'Checking mcpRequestStore');
+            const stored = mcpRequestStore.get(requestId);
+            logger.info({ toolName: name, stored: stored ? 'found' : 'not found', storedParams: stored?.params }, 'mcpRequestStore lookup');
+            if (stored && stored.params?.arguments && typeof stored.params.arguments === 'object') {
+              actualArgs = stored.params.arguments;
+              logger.info({ toolName: name, extractedArgs: actualArgs }, 'Extracted args from mcpRequestStore');
+            } else if (stored && stored.params) {
+              actualArgs = stored.params;
+              logger.info({ toolName: name, extractedParams: actualArgs }, 'Extracted params from mcpRequestStore');
+            }
+          }
+          // Also check if the args themselves have the arguments directly (some SDK versions pass it differently)
+          if (Object.keys(actualArgs).length === 0 && a.arguments && typeof a.arguments === 'object') {
+            actualArgs = a.arguments as Record<string, unknown>;
+            logger.info({ toolName: name, extractedArgs: actualArgs }, 'Extracted args from a.arguments directly');
+          }
+          // Strategy 10: Check if arguments are in http.req.body (parsed JSON-RPC body)
+          else if (a.http?.req?.body) {
+            try {
+              const body = typeof a.http.req.body === 'string' ? JSON.parse(a.http.req.body) : a.http.req.body;
+              logger.info({ toolName: name, parsedBody: JSON.stringify(body, null, 2) }, 'Parsed HTTP request body');
+              // The JSON-RPC body has params.arguments with the actual tool arguments
+              if (body.params?.arguments && typeof body.params.arguments === 'object') {
+                actualArgs = body.params.arguments as Record<string, unknown>;
+              } else if (body.params?.params) {
+                actualArgs = body.params.params;
+              } else if (body.arguments) {
+                actualArgs = body.arguments;
+              } else if (body.params) {
+                actualArgs = body.params;
+              } else if (body.method === 'tools/call' && body.params) {
+                // Direct params from the JSON-RPC request
+                actualArgs = body.params as Record<string, unknown>;
+              }
+            } catch (e) {
+              logger.warn({ toolName: name, error: String(e) }, 'Failed to parse http.req.body');
+            }
+          }
+          // Strategy 11: Fallback - use empty object but log warning
+          if (Object.keys(actualArgs).length === 0) {
+            logger.warn({ toolName: name, rawArgs: JSON.stringify(args, null, 2) }, 'Could not extract tool arguments, using empty object');
+          }
+        }
+        
+        logger.info({ toolName: name, actualArgs: JSON.stringify(actualArgs, null, 2) }, 'MCP tool actual args');
         try {
           // @ts-ignore - SDK type compatibility
-          const result = await handler(args ?? {});
+          const result = await handler(actualArgs);
           return {
             content: [
               {
@@ -958,6 +1124,10 @@ const httpServer = http.createServer(async (req, res) => {
             params: parsed.params,
             id: parsed.id,
           };
+          // Store parsed mcpRequest in the store for tool handlers to access
+          if (mcpRequest.id) {
+            mcpRequestStore.set(String(mcpRequest.id), mcpRequest);
+          }
           // Log MCP request (debug level, sanitized)
           reqLogger.debug({ 
             mcpMethod: parsed.method, 

@@ -182,7 +182,9 @@ export interface FileImagesResponse {
 }
 
 export interface ComponentsResponse {
-  components: Record<string, FigmaComponent>;
+  meta: {
+    components: Record<string, FigmaComponent>;
+  };
 }
 
 export interface StylesResponse {
@@ -414,6 +416,10 @@ export class FigmaClient {
 
       try {
         // Build headers with conditional request support
+        figmaLogger.debug({ 
+          tokenPrefix: this.accessToken.substring(0, 10) + '...',
+          url: this.baseUrl + endpoint
+        }, 'Using Figma token for request');
         const headers = new Headers();
         headers.set('X-Figma-Token', this.accessToken);
         headers.set('Content-Type', 'application/json');
@@ -438,6 +444,8 @@ export class FigmaClient {
         });
 
         clearTimeout(timeoutId);
+
+        figmaLogger.debug({ status: response.status, endpoint }, 'Figma API response');
 
         // Handle 304 Not Modified - return cached data
         if (response.status === 304) {
